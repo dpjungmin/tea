@@ -1,18 +1,30 @@
 [package]
 name = "tea"
 version = "0.1.0"
-description = "Terminal-typing Exercise Application"
+description = "A CLI-utility that helps you practice typing right in your terminal"
 authors = ["David Park <dpjungmin@gmail.com>"]
-license = "MIT"
+license = "MPL-2.0"
 repository = "https://github.com/dpjungmin/tea"
 edition = "2021"
 rust-version = "1.70"
 
 [dependencies]
 anyhow = "1.0"
-crossterm = "0.26"
+bitflags = "2.1"
+cassowary = "0.3"
+crossterm = { version = "0.26", features = ["event-stream"] }
+futures-util = { version = "0.3", features = ["std", "async-await"], default-features = false }
+once_cell = "1.17"
+signal-hook = "0.3"
+termini = "0.1"
 tokio = { version = "1", features = ["full"] }
 tui = "0.19"
+unicode-segmentation = "1.10"
+unicode-width = "0.1"
+
+[target.'cfg(not(windows))'.dependencies]  # https://github.com/vorner/signal-hook/issues/100
+signal-hook-tokio = { version = "0.3", features = ["futures-v0_3"] }
+libc = "0.2.141"
 
 [[bin]]
 name = "tea"

@@ -1,51 +1,112 @@
-use std::{collections::VecDeque, io, time::Duration};
+use std::{
+    collections::VecDeque,
+    io::{self, Stdout},
+    process,
+};
+
+use crate::compositor::Compositor;
 
 use anyhow::Result;
-use crossterm::{
-    event::{
-        self, poll, read, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers,
-    },
-    execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-};
 use tui::{
-    backend::CrosstermBackend,
     layout::{Alignment, Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
     text::{Span, Spans},
-    widgets::{Axis, Block, BorderType, Borders, Chart, Dataset, GraphType, Paragraph, Wrap},
-    Terminal,
+    widgets::{Block, BorderType, Borders, Paragraph, Wrap},
 };
 
-pub struct App<'a> {
-    text: &'a str,
+#[cfg(not(windows))]
+use {signal_hook::consts::signal, signal_hook_tokio::Signals};
+#[cfg(windows)]
+type Signals = futures_util::stream::Empty<()>;
+
+pub struct App {
+    compositor: Compositor,
+    terminal: tui::Terminal<tui::backend::CrosstermBackend<Stdout>>,
+    signals: Signals,
+    text: &'static str,
+    exit_code: i32,
 }
 
-impl Default for App<'_> {
-    fn default() -> Self {
-        Self {
-            text: crate::EXAMPLE_TEXT,
+impl App {
+    pub fn new(text: &'static str) -> Result<Self> {
+        let backend = tui::backend::CrosstermBackend::new(io::stdout());
+        let terminal = tui::Terminal::new(backend)?;
+
+        let area = terminal.size().expect("couldn't get terminal size");
+        let compositor = Compositor::new(text, area);
+
+        #[cfg(windows)]
+        let signals = futures_util::stream::empty();
+        #[cfg(not(windows))]
+        let signals = Signals::new([signal::SIGTSTP, signal::SIGCONT, signal::SIGUSR1])?;
+
+        let app = Self {
+            compositor,
+            terminal,
+            signals,
+            text,
+            exit_code: 0,
+        };
+
+        Ok(app)
+    }
+
+    fn claim_term(&mut self) -> io::Result<()> {
+        use crossterm::{
+            event::{
+                EnableFocusChange, EnableMouseCapture, KeyboardEnhancementFlags,
+                PushKeyboardEnhancementFlags,
+            },
+            execute,
+            terminal::{self, Clear, ClearType, EnterAlternateScreen},
+        };
+
+        terminal::enable_raw_mode()?;
+
+        let buf = self.terminal.backend_mut();
+
+        #[rustfmt::skip]
+        execute!(buf, EnterAlternateScreen, EnableMouseCapture, EnableFocusChange)?;
+        execute!(buf, Clear(ClearType::All))?;
+
+        if terminal::supports_keyboard_enhancement().is_ok() {
+            execute!(
+                buf,
+                PushKeyboardEnhancementFlags(
+                    KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                        | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS
+                )
+            )?;
         }
-    }
-}
 
-impl<'a> App<'a> {
-    pub fn new(text: &'a str) -> Self {
-        Self { text }
+        Ok(())
     }
 
-    pub fn run(self) -> Result<()> {
-        // Open app
-        enable_raw_mode()?;
-        let mut stdout = io::stdout();
-        execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    fn restore_term(&mut self) -> io::Result<()> {
+        use crossterm::{
+            cursor,
+            event::{DisableFocusChange, DisableMouseCapture, PopKeyboardEnhancementFlags},
+            execute,
+            terminal::{self, LeaveAlternateScreen},
+        };
 
-        let backend = CrosstermBackend::new(stdout);
-        let mut terminal = Terminal::new(backend)?;
+        terminal::disable_raw_mode()?;
 
-        'outer: loop {
-            // Draw widgets
-            terminal.draw(|f| {
+        let buf = self.terminal.backend_mut();
+
+        #[rustfmt::skip]
+        execute!(buf, LeaveAlternateScreen, DisableMouseCapture, DisableFocusChange, cursor::Show)?;
+
+        if terminal::supports_keyboard_enhancement().is_ok() {
+            execute!(buf, PopKeyboardEnhancementFlags)?;
+        }
+
+        Ok(())
+    }
+
+    async fn render(&mut self) {
+        self.terminal
+            .draw(|f| {
                 let chunks = Layout::default()
                     .direction(Direction::Vertical)
                     .constraints(
@@ -100,50 +161,23 @@ impl<'a> App<'a> {
                     .block(
                         Block::default()
                             .style(Style::default().bg(Color::Reset).fg(Color::Reset))
-                            .borders(Borders::NONE),
+                            .border_type(BorderType::Rounded)
+                            .borders(Borders::ALL),
                     )
                     .style(Style::default().fg(Color::Reset).bg(Color::Reset))
                     .alignment(Alignment::Left)
                     .wrap(Wrap { trim: true });
 
-                let mut text = self
-                    .text
-                    .lines()
-                    .into_iter()
-                    .map(|l| {
-                        Spans::from(vec![Span::styled(
-                            l,
-                            Style::default().bg(Color::Reset).fg(Color::White),
-                        )])
-                    })
-                    .collect::<VecDeque<_>>();
-
-                text.push_front(Spans::from(vec![Span::styled(
-                    " ",
-                    Style::default()
-                        .bg(Color::Green)
-                        .fg(Color::White)
-                        .add_modifier(Modifier::RAPID_BLINK),
-                )]));
-
-                text.push_back(Spans::from(vec![Span::styled(
-                    " ",
-                    Style::default()
-                        .bg(Color::Red)
-                        .fg(Color::White)
-                        .add_modifier(Modifier::RAPID_BLINK),
-                )]));
-
-                let mid = Paragraph::new(Vec::from(text))
+                let mid = Paragraph::new(Vec::from(self.compositor.lines()))
                     .block(
                         Block::default()
-                            .title("example.rs")
-                            .style(Style::default().bg(Color::Reset).fg(Color::Reset))
+                            // .style(Style::default().bg(Color::Reset).fg(Color::Reset))
                             .border_type(BorderType::Rounded)
                             .borders(Borders::ALL),
                     )
                     .style(Style::default().fg(Color::Reset).bg(Color::Reset))
-                    .alignment(Alignment::Left);
+                    .alignment(Alignment::Left)
+                    .wrap(Wrap { trim: false });
 
                 let text = vec![
                     Spans::from(vec![Span::styled(
@@ -151,7 +185,14 @@ impl<'a> App<'a> {
                         Style::default().bg(Color::Reset).fg(Color::White),
                     )]),
                     Spans::from(vec![
-                        Span::styled("q : ", Style::default().bg(Color::Reset).fg(Color::Blue)),
+                        Span::styled("esc : ", Style::default().bg(Color::Reset).fg(Color::Blue)),
+                        Span::styled("quit\n", Style::default().bg(Color::Reset).fg(Color::White)),
+                    ]),
+                    Spans::from(vec![
+                        Span::styled(
+                            "ctrl-c : ",
+                            Style::default().bg(Color::Reset).fg(Color::Blue),
+                        ),
                         Span::styled("quit\n", Style::default().bg(Color::Reset).fg(Color::White)),
                     ]),
                 ];
@@ -160,44 +201,144 @@ impl<'a> App<'a> {
                     .block(
                         Block::default()
                             .style(Style::default().bg(Color::Reset).fg(Color::Reset))
-                            .borders(Borders::NONE),
+                            .border_type(BorderType::Rounded)
+                            .borders(Borders::ALL),
                     )
                     .style(Style::default().fg(Color::Reset).bg(Color::Reset))
-                    .alignment(Alignment::Right)
+                    .alignment(Alignment::Left)
                     .wrap(Wrap { trim: true });
 
                 f.render_widget(top, chunks[0]);
                 f.render_widget(mid, chunks[1]);
                 f.render_widget(bot, chunks[2]);
-            })?;
+            })
+            .unwrap();
+    }
 
-            // `poll()` waits for an `Event` for a given time period
-            if poll(Duration::from_millis(500))? {
-                if let Event::Key(event) = read()? {
-                    match event.code {
-                        KeyCode::Char('q') => break 'outer,
-                        _ => {}
-                    }
+    #[cfg(windows)]
+    // no signal handling available on windows
+    pub async fn handle_signal(&mut self, _signal: ()) {}
+
+    #[cfg(not(windows))]
+    pub async fn handle_signal(&mut self, signal: i32) {
+        match signal {
+            signal::SIGTSTP => {
+                self.restore_term().unwrap();
+
+                // SAFETY:
+                //
+                // - helix must have permissions to send signals to all processes in its signal
+                //   group, either by already having the requisite permission, or by having the
+                //   user's UID / EUID / SUID match that of the receiving process(es).
+                let res = unsafe {
+                    // A pid of 0 sends the signal to the entire process group, allowing the user to
+                    // regain control of their terminal if the editor was spawned under another process
+                    // (e.g. when running `git commit`).
+                    //
+                    // We have to send SIGSTOP (not SIGTSTP) to the entire process group, because,
+                    // as mentioned above, the terminal will get stuck if `helix` was spawned from
+                    // an external process and that process waits for `helix` to complete. This may
+                    // be an issue with signal-hook-tokio, but the author of signal-hook believes it
+                    // could be a tokio issue instead:
+                    // https://github.com/vorner/signal-hook/issues/132
+                    libc::kill(0, signal::SIGSTOP)
+                };
+
+                if res != 0 {
+                    let err = io::Error::last_os_error();
+                    eprintln!("{}", err);
+                    let raw_os_error = err.raw_os_error().unwrap_or(1);
+                    process::exit(raw_os_error);
                 }
-                // match read()? {
-                //     Event::FocusGained => println!("FocusGained"),
-                //     Event::FocusLost => println!("FocusLost"),
-                //     Event::Key(event) => println!("{:?}", event),
-                //     Event::Mouse(event) => println!("{:?}", event),
-                //     #[cfg(feature = "bracketed-paste")]
-                //     Event::Paste(data) => println!("Pasted {:?}", data),
-                //     Event::Resize(width, height) => println!("New size {}x{}", width, height),
-                //     _ => {}
-                // }
-            } else {
-                // Timeout expired and no `Event` is available
+            }
+            signal::SIGCONT => {
+                self.claim_term().unwrap();
+                self.terminal.clear().expect("couldn't clear terminal");
+                self.render().await;
+            }
+            signal::SIGUSR1 => {
+                self.render().await;
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    async fn handle_event(&mut self, event: Result<crossterm::event::Event, crossterm::ErrorKind>) {
+        use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+
+        let should_redraw = match event.unwrap() {
+            Event::Key(KeyEvent {
+                kind: KeyEventKind::Release,
+                ..
+            }) => false,
+            Event::Key(KeyEvent {
+                code: KeyCode::Esc, ..
+            }) => {
+                self.restore_term().unwrap();
+                process::exit(0);
+            }
+            Event::Key(KeyEvent {
+                code: KeyCode::Char('c'),
+                modifiers: KeyModifiers::CONTROL,
+                ..
+            }) => {
+                self.restore_term().unwrap();
+                process::exit(0);
+            }
+            _event => true,
+        };
+
+        if should_redraw {
+            self.render().await;
+        }
+    }
+
+    async fn event_loop_until_idle<S>(&mut self, input_stream: &mut S) -> bool
+    where
+        S: futures_util::Stream<Item = crossterm::Result<crossterm::event::Event>> + Unpin,
+    {
+        use futures_util::StreamExt;
+
+        loop {
+            tokio::select! {
+                biased;
+
+                Some(signal) = self.signals.next() => {
+                    self.handle_signal(signal).await;
+                }
+
+                Some(event) = input_stream.next() => {
+                    self.handle_event(event).await;
+                }
             }
         }
+    }
 
-        // Close app
-        disable_raw_mode()?;
-        execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture)?;
+    async fn event_loop<S>(&mut self, input_stream: &mut S)
+    where
+        S: futures_util::Stream<Item = crossterm::Result<crossterm::event::Event>> + Unpin,
+    {
+        self.render().await;
 
-        Ok(())
+        loop {
+            if !self.event_loop_until_idle(input_stream).await {
+                break;
+            }
+        }
+    }
+
+    pub async fn run<S>(&mut self, input_stream: &mut S) -> Result<i32>
+    where
+        S: futures_util::Stream<Item = crossterm::Result<crossterm::event::Event>> + Unpin,
+    {
+        self.claim_term()?;
+
+        // TODO: set panic hook that exits the screen and disables raw mode
+
+        self.event_loop(input_stream).await;
+
+        self.restore_term()?;
+
+        Ok(self.exit_code)
     }
 }

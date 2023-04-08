@@ -1,4 +1,5 @@
 mod app;
+mod compositor;
 
 pub use app::App;
 
@@ -15,4 +16,8 @@ mod tests {
         let result = add(2, 2);
         assert_eq!(result, 4);
     }
-}"#;
+}
+
+// Lorem ipsum dolor sit amet, consectetur adipiscing elit. Curabitur lacinia nibh id mi pellentesque finibus. Etiam suscipit, felis sed laoreet venenatis, sem quam efficitur purus, vitae commodo nisl.
+// Please note that the text provided is a commonly used placeholder text called "Lorem Ipsum." It is used to fill in spaces where actual text will be placed later on.
+"#;

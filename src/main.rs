@@ -1,16 +1,19 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
+use crossterm::event::EventStream;
 use tea::App;
 
 type ExitCode = i32;
 
 #[tokio::main]
 async fn tea_main() -> Result<ExitCode> {
-    // Let's just make it display something for now!
-    App::default().run().context("Noooo!!")?;
+    let mut app = App::new(tea::EXAMPLE_TEXT)?;
 
-    Ok(0)
+    let exit_code = app.run(&mut EventStream::new()).await?;
+
+    Ok(exit_code)
 }
 
 fn main() -> Result<()> {
-    std::process::exit(tea_main()?);
+    let exit_code = tea_main()?;
+    std::process::exit(exit_code);
 }
