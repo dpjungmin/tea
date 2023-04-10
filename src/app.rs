@@ -1,5 +1,4 @@
 use std::{
-    collections::VecDeque,
     io::{self, Stdout},
     process,
 };
@@ -7,12 +6,6 @@ use std::{
 use crate::compositor::Compositor;
 
 use anyhow::Result;
-use tui::{
-    layout::{Alignment, Constraint, Direction, Layout},
-    style::{Color, Modifier, Style},
-    text::{Span, Spans},
-    widgets::{Block, BorderType, Borders, Paragraph, Wrap},
-};
 
 #[cfg(not(windows))]
 use {signal_hook::consts::signal, signal_hook_tokio::Signals};
@@ -23,17 +16,14 @@ pub struct App {
     compositor: Compositor,
     terminal: tui::Terminal<tui::backend::CrosstermBackend<Stdout>>,
     signals: Signals,
-    text: &'static str,
     exit_code: i32,
 }
 
 impl App {
     pub fn new(text: &'static str) -> Result<Self> {
+        let compositor = Compositor::new(text);
         let backend = tui::backend::CrosstermBackend::new(io::stdout());
         let terminal = tui::Terminal::new(backend)?;
-
-        let area = terminal.size().expect("couldn't get terminal size");
-        let compositor = Compositor::new(text, area);
 
         #[cfg(windows)]
         let signals = futures_util::stream::empty();
@@ -44,7 +34,6 @@ impl App {
             compositor,
             terminal,
             signals,
-            text,
             exit_code: 0,
         };
 
@@ -105,114 +94,7 @@ impl App {
     }
 
     async fn render(&mut self) {
-        self.terminal
-            .draw(|f| {
-                let chunks = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints(
-                        [
-                            Constraint::Percentage(10),
-                            Constraint::Percentage(80),
-                            Constraint::Percentage(10),
-                        ]
-                        .as_ref(),
-                    )
-                    .horizontal_margin(2)
-                    .vertical_margin(1)
-                    .split(f.size());
-
-                let text = vec![Spans::from(vec![
-                    Span::styled(
-                        "T",
-                        Style::default()
-                            .bg(Color::Reset)
-                            .fg(Color::Yellow)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(
-                        "erminal-typing ",
-                        Style::default().bg(Color::Reset).fg(Color::Yellow),
-                    ),
-                    Span::styled(
-                        "E",
-                        Style::default()
-                            .bg(Color::Reset)
-                            .fg(Color::Yellow)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(
-                        "xercise ",
-                        Style::default().bg(Color::Reset).fg(Color::Yellow),
-                    ),
-                    Span::styled(
-                        "A",
-                        Style::default()
-                            .bg(Color::Reset)
-                            .fg(Color::Yellow)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(
-                        "pplication",
-                        Style::default().bg(Color::Reset).fg(Color::Yellow),
-                    ),
-                ])];
-
-                let top = Paragraph::new(text)
-                    .block(
-                        Block::default()
-                            .style(Style::default().bg(Color::Reset).fg(Color::Reset))
-                            .border_type(BorderType::Rounded)
-                            .borders(Borders::ALL),
-                    )
-                    .style(Style::default().fg(Color::Reset).bg(Color::Reset))
-                    .alignment(Alignment::Left)
-                    .wrap(Wrap { trim: true });
-
-                let mid = Paragraph::new(Vec::from(self.compositor.lines()))
-                    .block(
-                        Block::default()
-                            // .style(Style::default().bg(Color::Reset).fg(Color::Reset))
-                            .border_type(BorderType::Rounded)
-                            .borders(Borders::ALL),
-                    )
-                    .style(Style::default().fg(Color::Reset).bg(Color::Reset))
-                    .alignment(Alignment::Left)
-                    .wrap(Wrap { trim: false });
-
-                let text = vec![
-                    Spans::from(vec![Span::styled(
-                        "HELP",
-                        Style::default().bg(Color::Reset).fg(Color::White),
-                    )]),
-                    Spans::from(vec![
-                        Span::styled("esc : ", Style::default().bg(Color::Reset).fg(Color::Blue)),
-                        Span::styled("quit\n", Style::default().bg(Color::Reset).fg(Color::White)),
-                    ]),
-                    Spans::from(vec![
-                        Span::styled(
-                            "ctrl-c : ",
-                            Style::default().bg(Color::Reset).fg(Color::Blue),
-                        ),
-                        Span::styled("quit\n", Style::default().bg(Color::Reset).fg(Color::White)),
-                    ]),
-                ];
-
-                let bot = Paragraph::new(text)
-                    .block(
-                        Block::default()
-                            .style(Style::default().bg(Color::Reset).fg(Color::Reset))
-                            .border_type(BorderType::Rounded)
-                            .borders(Borders::ALL),
-                    )
-                    .style(Style::default().fg(Color::Reset).bg(Color::Reset))
-                    .alignment(Alignment::Left)
-                    .wrap(Wrap { trim: true });
-
-                f.render_widget(top, chunks[0]);
-                f.render_widget(mid, chunks[1]);
-                f.render_widget(bot, chunks[2]);
-            })
-            .unwrap();
+        self.compositor.render(&mut self.terminal);
     }
 
     #[cfg(windows)]
@@ -267,6 +149,7 @@ impl App {
         use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
         let should_redraw = match event.unwrap() {
+            Event::Resize(_columns, _rows) => true,
             Event::Key(KeyEvent {
                 kind: KeyEventKind::Release,
                 ..
@@ -285,7 +168,17 @@ impl App {
                 self.restore_term().unwrap();
                 process::exit(0);
             }
-            _event => true,
+            Event::Key(KeyEvent {
+                code: KeyCode::Char(ch),
+                ..
+            }) => {
+                self.compositor.type_char(ch);
+                true
+            }
+            _event => {
+                // TODO: add event handler to compositor
+                false
+            }
         };
 
         if should_redraw {

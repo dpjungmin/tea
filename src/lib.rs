@@ -1,5 +1,6 @@
 mod app;
 mod compositor;
+mod stats;
 
 pub use app::App;
 
