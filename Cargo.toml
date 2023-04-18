@@ -6,7 +6,6 @@ authors = ["David Park <dpjungmin@gmail.com>"]
 license = "MPL-2.0"
 repository = "https://github.com/dpjungmin/tea"
 edition = "2021"
-rust-version = "1.70"
 
 [dependencies]
 anyhow = "1.0"
@@ -22,7 +21,8 @@ tui = "0.19"
 unicode-segmentation = "1.10"
 unicode-width = "0.1"
 
-[target.'cfg(not(windows))'.dependencies]  # https://github.com/vorner/signal-hook/issues/100
+# https://github.com/vorner/signal-hook/issues/100
+[target.'cfg(not(windows))'.dependencies]
 signal-hook-tokio = { version = "0.3", features = ["futures-v0_3"] }
 libc = "0.2.141"
 

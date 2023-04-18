@@ -40,7 +40,6 @@ impl Compositor {
 
             if index == 0 {
                 let (first, remaining) = line.split_at(1);
-                dbg!(first);
                 v.push(Span::styled(
                     first,
                     Style::default()

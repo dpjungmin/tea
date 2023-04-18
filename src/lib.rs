@@ -1,8 +1,9 @@
 mod app;
+mod args;
 mod compositor;
 mod stats;
 
-pub use app::App;
+pub use self::{app::App, args::Args};
 
 pub const EXAMPLE_TEXT: &str = r#"pub fn add(left: usize, right: usize) -> usize {
     left + right
