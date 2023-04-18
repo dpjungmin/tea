@@ -1,5 +1,3 @@
-use std::process;
-
 use tea::{App, Args};
 
 use anyhow::Result;
@@ -42,17 +40,15 @@ async fn tea_main() -> Result<ExitCode> {
 
     if args.display_help {
         print_help();
-        process::exit(0);
+        std::process::exit(0);
     }
 
     if args.display_version {
         print_version();
-        process::exit(0);
+        std::process::exit(0);
     }
 
-    // TODO: pass `args.files` to app
-
-    let mut app = App::new(tea::EXAMPLE_TEXT)?;
+    let mut app = App::new(args.files.as_ref())?;
 
     let exit_code = app.run(&mut EventStream::new()).await?;
 

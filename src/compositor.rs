@@ -24,50 +24,56 @@ impl State {
     }
 }
 
+#[derive(Debug)]
+struct Line {
+    _line_number: usize,
+    text: String,
+    current_index: Option<usize>,
+}
+
 pub struct Compositor {
-    _text: &'static str,
-    lines: Vec<Spans<'static>>,
+    lines: Vec<Line>,
     state: State,
     stats: Stats,
 }
 
 impl Compositor {
-    pub fn new(text: &'static str) -> Self {
+    pub fn new(text: &str) -> Self {
         let mut lines = Vec::new();
 
         for (index, line) in text.lines().enumerate() {
-            let mut v = Vec::new();
+            let mut line = Line {
+                _line_number: index,
+                text: String::from(line),
+                current_index: None,
+            };
 
             if index == 0 {
-                let (first, remaining) = line.split_at(1);
-                v.push(Span::styled(
-                    first,
-                    Style::default()
-                        .bg(Color::Reset)
-                        // .bg(Color::Rgb(0, 255, 0))
-                        .fg(Color::White)
-                        .add_modifier(Modifier::BOLD),
-                ));
-                v.push(Span::styled(
-                    remaining,
-                    Style::default().bg(Color::Reset).fg(Color::White),
-                ));
-            } else {
-                v.push(Span::styled(
-                    line,
-                    Style::default().bg(Color::Reset).fg(Color::White),
-                ));
+                line.current_index = Some(0);
             }
 
-            lines.push(Spans::from(v));
+            lines.push(line);
         }
 
         Self {
-            _text: text,
+            lines,
             state: State::new(),
             stats: Stats::new(),
-            lines,
         }
+    }
+
+    fn lines_as_spans(&self) -> Vec<Spans<'_>> {
+        self.lines
+            .iter()
+            .map(|l| {
+                let v = vec![
+                    // NOTE: should we add line numbers?
+                    Span::styled(&l.text, Style::default().fg(Color::White).bg(Color::Reset)),
+                ];
+
+                Spans::from(v)
+            })
+            .collect::<Vec<_>>()
     }
 
     pub fn render(&self, terminal: &mut Terminal<CrosstermBackend<Stdout>>) {
@@ -134,7 +140,7 @@ impl Compositor {
                     .alignment(Alignment::Left)
                     .wrap(Wrap { trim: true });
 
-                let mid = Paragraph::new(self.lines.clone())
+                let mid = Paragraph::new(self.lines_as_spans())
                     .block(
                         Block::default()
                             // .style(Style::default().bg(Color::Reset).fg(Color::Reset))

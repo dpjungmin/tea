@@ -1,6 +1,6 @@
 use std::{
     io::{self, Stdout},
-    process,
+    path::Path,
 };
 
 use crate::compositor::Compositor;
@@ -20,7 +20,10 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(text: &'static str) -> Result<Self> {
+    pub fn new<P: AsRef<Path>>(_files: &[P]) -> Result<Self> {
+        // TODO: instead of hard-coding text, use files
+        let text = crate::EXAMPLE_TEXT;
+
         let compositor = Compositor::new(text);
         let backend = tui::backend::CrosstermBackend::new(io::stdout());
         let terminal = tui::Terminal::new(backend)?;
@@ -130,7 +133,7 @@ impl App {
                     let err = io::Error::last_os_error();
                     eprintln!("{}", err);
                     let raw_os_error = err.raw_os_error().unwrap_or(1);
-                    process::exit(raw_os_error);
+                    std::process::exit(raw_os_error);
                 }
             }
             signal::SIGCONT => {
@@ -158,7 +161,7 @@ impl App {
                 code: KeyCode::Esc, ..
             }) => {
                 self.restore_term().unwrap();
-                process::exit(0);
+                std::process::exit(0);
             }
             Event::Key(KeyEvent {
                 code: KeyCode::Char('c'),
@@ -166,7 +169,7 @@ impl App {
                 ..
             }) => {
                 self.restore_term().unwrap();
-                process::exit(0);
+                std::process::exit(0);
             }
             Event::Key(KeyEvent {
                 code: KeyCode::Char(ch),
@@ -226,7 +229,28 @@ impl App {
     {
         self.claim_term()?;
 
-        // TODO: set panic hook that exits the screen and disables raw mode
+        // Exit the alternate screen and disable raw mode before panicking
+        std::panic::set_hook(Box::new(move |info| {
+            use crossterm::{
+                cursor,
+                event::{DisableFocusChange, DisableMouseCapture, PopKeyboardEnhancementFlags},
+                execute,
+                terminal::{self, LeaveAlternateScreen},
+            };
+
+            let mut stdout = io::stdout();
+
+            let _ = terminal::disable_raw_mode();
+
+            #[rustfmt::skip]
+            let _ = execute!(stdout, LeaveAlternateScreen, DisableMouseCapture, DisableFocusChange, cursor::Show);
+
+            if terminal::supports_keyboard_enhancement().is_ok() {
+                let _ = execute!(stdout, PopKeyboardEnhancementFlags);
+            }
+
+            std::panic::take_hook()(info);
+        }));
 
         self.event_loop(input_stream).await;
 
